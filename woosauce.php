@@ -167,3 +167,85 @@ if ( ! function_exists( 'woocommerce_rest_delete_product_images' ) ) {
 		}
 	}
 }
+
+if ( ! function_exists( 'wc_rest_get_product_images' ) ) {
+	add_filter( 'woocommerce_rest_prepare_product_object', 'wc_rest_get_product_images', 10, 2 );
+
+	/**
+	 * Get the images for a product or product variation
+	 * and returns all image sizes.
+	 *
+	 * @param WP_REST_Request                 $request Request object.
+	 * @param WC_Product|WC_Product_Variation $product Product instance.
+	 *
+	 * @return WP_REST_Response
+	 */
+	function wc_rest_get_product_images( $response, $product ) {
+		$images           = array();
+		$attachment_ids   = array();
+		$attachment_sizes = array_merge( get_intermediate_image_sizes(), array( 'full', 'custom' ) );
+
+		// Add featured image.
+		if ( $product->get_image_id() ) {
+			$attachment_ids[] = $product->get_image_id();
+		}
+
+		// Add gallery images.
+		$attachment_ids = array_merge( $attachment_ids, $product->get_gallery_image_ids() );
+
+		$attachments = array();
+
+		// Build image data.
+		foreach ( $attachment_ids as $position => $attachment_id ) {
+			$attachment_post = get_post( $attachment_id );
+			if ( is_null( $attachment_post ) ) {
+				continue;
+			}
+
+			// Get each image size of the attachment.
+			foreach ( $attachment_sizes as $size ) {
+				$attachments[ $size ] = current( wp_get_attachment_image_src( $attachment_id, $size ) );
+			}
+
+			$featured = $position === 0 ? true : false; // phpcs:ignore WordPress.PHP.YodaConditions.NotYoda
+
+			$images[] = array(
+				'id'                => (int) $attachment_id,
+				'date_created'      => wc_rest_prepare_date_response( $attachment_post->post_date, false ),
+				'date_created_gmt'  => wc_rest_prepare_date_response( strtotime( $attachment_post->post_date_gmt ) ),
+				'date_modified'     => wc_rest_prepare_date_response( $attachment_post->post_modified, false ),
+				'date_modified_gmt' => wc_rest_prepare_date_response( strtotime( $attachment_post->post_modified_gmt ) ),
+				'src'               => $attachments,
+				'name'              => get_the_title( $attachment_id ),
+				'alt'               => get_post_meta( $attachment_id, '_wp_attachment_image_alt', true ),
+				'position'          => (int) $position,
+				'featured'          => $featured,
+			);
+		}
+
+		// Set a placeholder image if the product has no images set.
+		if ( empty( $images ) ) {
+			// Get each image size of the attachment.
+			foreach ( $attachment_sizes as $size ) {
+				$attachments[ $size ] = current( wp_get_attachment_image_src( get_option( 'woocommerce_placeholder_image', 0 ), $size ) );
+			}
+
+			$images[] = array(
+				'id'       => 0,
+				'date_created'      => wc_rest_prepare_date_response( current_time( 'mysql' ), false ), // Default to now.
+				'date_created_gmt'  => wc_rest_prepare_date_response( time() ), // Default to now.
+				'date_modified'     => wc_rest_prepare_date_response( current_time( 'mysql' ), false ),
+				'date_modified_gmt' => wc_rest_prepare_date_response( time() ),
+				'src'               => $attachments,
+				'name'              => __( 'Placeholder', 'woosauce' ),
+				'alt'               => __( 'Placeholder', 'woosauce' ),
+				'position'          => 0,
+				'featured'          => true,
+			);
+		}
+
+		$response->data['images'] = $images;
+
+		return $response;
+	} // END wc_rest_get_product_images()
+}
