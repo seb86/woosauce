@@ -16,6 +16,103 @@
 
 defined( 'ABSPATH' ) || exit;
 
+add_filter( 'woocommerce_rest_insert_product_object', 'wc_rest_upload_featured_product_image_base64', 10, 3 );
+
+if ( ! function_exists( 'wc_rest_upload_featured_product_image_base64' ) ) {
+	function wc_rest_upload_featured_product_image_base64( $product, $request, $creating ) {
+		if ( $creating ) {
+			$params = method_exists( $request, 'get_params' ) ? $request->get_params() : array();
+
+			// Base 64 string passed?
+			$featured_image_base64 = isset( $params['featured_image_base64'] ) ? $params['featured_image_base64'] : '';
+
+			if ( ! empty( $featured_image_base64 ) ) {
+				$time = time();
+
+				// Product ID
+				$product_id = $product->get_id();
+
+				// Upload directory.
+				$uploads = wp_upload_dir( $time );
+
+				// Prepare file data
+				$file_data = explode( '/', $featured_image_base64 );
+				$extension = str_replace( 'base64', '', str_replace( ';', '', substr( $file_data[1], 0, 3 ) ) ); // Get the first 3 characters as the extension.
+				$file_name = $product_id . '_featured_image.' . $extension; // Filename to save the image as.
+
+				// Make file name unique.
+				$file_name = wp_unique_filename( $uploads['path'], $file_name );
+
+				// Strip the query strings from the file name.
+				$file_name = str_replace( '?', '-', $file_name );
+				$file_name = str_replace( '&', '-', $file_name );
+
+				$file_name = woocommerce_rest_unique_filename( $file_name, "." . $extension );
+
+				// File location where the file will be saved.
+				$file_location = $uploads['path'] . "/" . $file_name;
+
+				// Create a new file in the WordPress uploads folder.
+				$file = fopen( $file_location, 'wb' ); 
+
+				// Get the image data.
+				$data = explode( ',', $featured_image_base64 );
+
+				// Save file data.
+				fwrite( $file, base64_decode( $data[1] ) );
+
+				// Clean up the file.
+				fclose( $file ); 
+
+				include_once ABSPATH . 'wp-admin/includes/media.php';
+
+				if ( ! function_exists( 'wp_generate_attachment_metadata' ) ) {
+					include( ABSPATH . 'wp-admin/includes/image.php' );
+				}
+
+				$info    = wp_check_filetype( $file_location );
+				$title   = '';
+				$content = '';
+
+				if ( $image_meta = @wp_read_image_metadata( $file_location ) ) {
+					if ( trim( $image_meta['title'] ) && ! is_numeric( sanitize_title( $image_meta['title'] ) ) ) {
+						$title = wc_clean( $image_meta['title'] );
+					}
+					if ( trim( $image_meta['caption'] ) ) {
+						$content = wc_clean( $image_meta['caption'] );
+					}
+				}
+
+				// Prepare an array of post data for the attachment.
+				$attachment = array(
+					'guid'           => $uploads['url'] . "/" . $file_name,
+					'post_mime_type' => $info['type'],
+					'post_title'     => $title ? $title : basename( $file_location ),
+					'post_content'   => $content
+				);
+
+				// Insert as attachment.
+				$attachment_id = wp_insert_attachment( $attachment, $file_location, $product_id );
+
+				if ( ! is_wp_error( $attachment_id ) ) {
+					$meta_data = wp_generate_attachment_metadata( $attachment_id, $file_location );
+
+					if ( ! is_wp_error( $meta_data ) ) {
+						// Generate images.
+						wp_update_attachment_metadata( $attachment_id, $meta_data );
+
+						// Set featured image.
+						update_post_meta( $product->get_id(), '_thumbnail_id', $attachment_id ); // Force the thumbnail ID meta to attach uploaded image.
+						$product->set_image_id( $attachment_id );
+					}
+				}
+			}
+
+			return $product;
+		}
+	}
+}
+
 if ( ! function_exists( 'woocommerce_rest_upload_product_images' ) ) {
 	add_filter( 'woocommerce_rest_insert_product_object', 'woocommerce_rest_upload_product_images', 10, 3 );
 
